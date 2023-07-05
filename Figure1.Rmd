@@ -1,0 +1,107 @@
+---
+title: "Figure1_UMAP_MarkerGenes"
+output: html_document
+date: "2023-07-05"
+---
+
+```{r}
+library(pals)
+library(Seurat)
+library(ComplexHeatmap)
+```
+
+```{r}
+seurat_integrated <- readRDS("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/8.AbSeq/20220816_merged_SCT_xyexcluded_CompleteAnnot.rds")
+```
+
+```{r}
+blues <- c("#006c67", "#3a86ff", "#2D92D1", "#74BBE8", "#97D1F4", "#74c69d", "#158774", "#2ED1B5", "#40916c") #, "#97F4E5"
+reds <- c(brewer.reds(15)[c(3, 6, 9, 13, 15)], 
+          brewer.oranges(5)[c(3, 5)])
+cols4 <- c(blues, 
+           brewer.purd(10)[c(3, 4, 5)], 
+           brewer.bupu(20)[c(4, 6, 8, 10, 12, 14, 20)], 
+           reds)
+levels(seurat_integrated) <- c("MLP", "MEP", "NP", "MDP", "pDCs", "cDCs", "preB", "pro/pre T", "Mono", 
+                               "CD8 NV","CD8 hobit", "CD8 mem. 1", "CD8 mem. 2", "CD8 mem. 3", "CD8 eff. 1", "CD8 eff. 2", "CD8 IFN", 
+                               "gdT", "MAIT", 
+                               "CD4 NV", "Th", "Th17", "Treg", "CD4 IFN")
+pdf(file = "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure1/202210_Fig1b_UMAP.pdf", width = 7.5, height = 5) #202208 has alpha
+DimPlot(seurat_integrated, pt.size = 0.4, raster = F, shuffle = F, label.size = 5, label = T, repel = T, order = F, cols = cols4) + theme_void()
+dev.off()
+```
+
+```{r}
+#Idents Annotation_new
+levels(seurat_integrated) <- c("MLP", "MEP", "NP", "MDP", "pDCs", "cDCs", "preB", "Mono", "pro/pre T",  
+                               "CD8 NV","CD8 hobit", "CD8 mem. 1", "CD8 mem. 2", "CD8 mem. 3", "CD8 eff. 1", "CD8 eff. 2", 
+                               "gdT", "MAIT", 
+                               "CD4 NV", "Th", "Th17", "Treg", 
+                               "CD8 IFN", "CD4 IFN")
+levels_htmp <- levels(seurat_integrated)
+```
+
+```{r}
+seurat_av <- AverageExpression(seurat_integrated, assays = "RNA", return.seurat = F, slot = "data")
+zscore <- scale(t(seurat_av$RNA))
+zscore[zscore > 2.5] <- 2.5
+zscore[zscore < -2.5] <- -2.5
+```
+
+```{r}
+div_colors <- c("white", "#d8f3dc", "#52b788", "#1b4332")
+plot_genes <- c("CD34", 
+                "GATA2", "CTSG", "AZU1", 
+                "IRF7", "SCT", "TGFBI",  "DNTT", "VPREB1", "ITGAM", 
+                "CD3G", "TRBC2", "CD8A", "CD8B",  
+                "CCR7", "SELL", 
+                "ZNF683","GZMK", "CD160",
+                "NKG7", "PRF1", "GZMB", "GZMH", "GNLY",  
+                "TRGC1", "KLRB1", "SLC4A10", "NCR3", 
+                "CD4", "IL2", 
+                "FAM13A", #FAM13A looks nice but not sure what it meanz
+                "CCR10", "IL21", "CTSH", "LMNA",
+                "FOXP3", 
+                "ISG15", "IFI6") #IL4, IL1B, IL23A, IL6 do not look good
+
+pdf(file = "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure1/202208_Fig1_MarkerGenes_AvHtmp.pdf", width =7, height = 7)
+Heatmap(t(zscore[levels_htmp, intersect(plot_genes, rownames(seurat_av$RNA))]),  cluster_rows = F, cluster_columns = F, c(div_colors))
+dev.off()
+```
+
+```{r}
+seurat_av2 <- AverageExpression(seurat_integrated, assays = "scenic", return.seurat = F)
+zscore <- scale(t(seurat_av2$scenic))
+zscore[zscore > 2.5] <- 2.5
+zscore[zscore < -2.5] <- -2.5
+```
+
+```{r, fig.width=3, fig.height=4}
+div_colors <- rev(c("#d45e5e", "#f08080", "#f4978e", "#f8ad9d", "#fbc4ab", "#fef4d7", "white"))
+pdf(file = "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure1/202208_Fig1_MarkerTFs_AvHtmp.pdf", width =7, height = 4)
+Heatmap(t(zscore[levels_htmp, c("GATA2", "KLF1", "EGR1", "IRF8","EBF1", "SPI1", "ZEB1",  
+                                "TCF7", "EOMES", "TBX21", "RORC", "LEF1", "FOXP3", "STAT1")]),  cluster_rows = F, cluster_columns = F,col = c("white", brewer.rdpu(4)))
+dev.off()
+
+```
+
+```{r}
+pdf(file = "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure1/202208_EXPLORE_MarkerTFs_AvHtmp.pdf", width =9, height = 30)
+Heatmap(t(zscore[levels_htmp, unique(rownames(seurat_av2$scenic))]),  cluster_rows = T, cluster_columns = F,col = c("white", brewer.rdpu(4)))
+dev.off()
+```
+
+```{r}
+pdf(file = "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure1/202208_Fig1_LEF1_umap.pdf", width =5, height = 5)
+FeaturePlot(seurat_integrated, "LEF1", order = T, pt.size = 0.5, cols = c("lightgrey", "#823f91")) + theme_void()
+dev.off()
+pdf(file = "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure1/202208_Fig1_CCR7_umap.pdf", width =5, height = 5)
+FeaturePlot(seurat_integrated, "CCR7", order = T, pt.size = 0.5, cols = c("lightgrey", "#823f91")) + theme_void()
+dev.off()
+pdf(file = "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure1/202208_Fig1_gzmb_umap.pdf", width =5, height = 5)
+FeaturePlot(seurat_integrated, "GZMB", order = T, pt.size = 0.5, cols = c("lightgrey", "#823f91")) + theme_void()
+dev.off()
+pdf(file = "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure1/202208_Fig1_znf683_umap.pdf", width =5, height = 5)
+FeaturePlot(seurat_integrated, "ZNF683", order = T, pt.size = 0.5, cols = c("lightgrey", "#823f91")) + theme_void()
+dev.off()
+```
