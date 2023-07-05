@@ -1,0 +1,158 @@
+---
+title: "Figure2_ClusterAbundance"
+output: html_document
+date: "2023-07-05"
+---
+
+```{r}
+library(Seurat)
+library(xlsx)
+```
+
+```{r}
+seurat_integrated <- readRDS("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/8.AbSeq/20220816_merged_SCT_xyexcluded_CompleteAnnot.rds")
+#Idents Annotation_new
+levels(seurat_integrated) <- c("MLP", "MEP", "NP", "MDP", "pDCs", "cDCs", "preB", "Mono", "pro/pre T",  
+                               "CD8 NV","CD8 hobit", "CD8 mem. 1", "CD8 mem. 2", "CD8 mem. 3", "CD8 eff. 1", "CD8 eff. 2", 
+                               "gdT", "MAIT", 
+                               "CD4 NV", "Th", "Th17", "Treg", 
+                               "CD8 IFN", "CD4 IFN")
+levels_htmp <- levels(seurat_integrated)
+
+levels_t <- c("CD4 NV", "Th", "Th17", "Treg", "CD4 IFN", 
+              "CD8 NV","CD8 hobit", "CD8 mem. 1", "CD8 mem. 2", "CD8 mem. 3", "CD8 eff. 1", "CD8 eff. 2", "gdT", "MAIT", "CD8 IFN")
+levels_hspcs <- c("MLP", "MEP", "NP", "MDP", "pDCs", "cDCs", "preB", "Mono", "pro/pre T")
+hspcs_obj <- subset(seurat_integrated, subset = Annotation_new %in% levels_hspcs)
+cd3_obj <- subset(seurat_integrated, subset = Annotation_new %in% levels_hspcs, invert = T)
+```
+
+```{r, fig.height=3.5, fig.width=8}
+#fig2b
+cd3_counts <- as.data.frame(table(cd3_obj@meta.data$orig.ident, cd3_obj@meta.data$Annotation_new))
+colnames(cd3_counts) <- c("Condition", "CellType", "n_cells")
+
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure2/202208_cd3_ncells_condition.pdf", width = 8, height = 3.5)
+ggplot(cd3_counts, aes(x = factor(CellType, levels = levels_t), y = n_cells, fill = Condition)) + 
+  geom_bar(stat = "identity") + 
+  theme_classic() + 
+  theme(text = element_text(size=15), 
+        axis.text.x = element_text(angle = 90, 
+                                   vjust = 0.5, 
+                                   hjust=1, 
+                                   size=15), 
+        axis.text.y = element_text(size = 15)) + 
+  scale_fill_manual(values = c("#3182BD", "#A1D99B")) + 
+  xlab("Cell type") +
+  ylab("Number of cells")#patient_colors
+dev.off()
+```
+
+#HSPCs Fisher test
+```{r}
+hspcs_cell_numbers <- as.data.frame(table(hspcs_obj@meta.data$Annotation_new, hspcs_obj@meta.data$orig.ident))
+colnames(hspcs_cell_numbers) <- c("Cell type", "Condition", "Freq")
+
+cr <- hspcs_cell_numbers[which(hspcs_cell_numbers$Condition == "CR"), c("Cell type", "Freq")]
+colnames(cr) <- c("Cell type", "CR")
+
+rel <- hspcs_cell_numbers[which(hspcs_cell_numbers$Condition == "Rel"), c("Cell type", "Freq")]
+colnames(rel) <- c("Cell type", "Rel")
+
+table_clusters <- cbind(cr, rel)[, c(1, 2, 4)]
+rownames(table_clusters) <- table_clusters$`Cell type`
+
+table_clusters$cr_pt <- table_clusters[, 'CR']/sum(table_clusters$`CR`)*100
+table_clusters$rel_pt <- table_clusters[, 'Rel']/sum(table_clusters$`Rel`)*100
+
+for (i in unique(table_clusters$`Cell type`)){
+  cont_table <- data.frame()
+  cont_table['CR', i] <- table_clusters[i, 'CR']
+  cont_table['CR', 'rest'] <- sum(table_clusters$`CR`) - as.numeric(table_clusters[i, 'CR'])
+  cont_table['Rel', i] <- table_clusters[i, 'Rel']
+  cont_table['Rel', 'rest'] <- sum(table_clusters$`Rel`) - as.numeric(table_clusters[i, 'Rel'])
+  
+  table_clusters[i, 'Fisher_pvalue'] <- fisher.test(cont_table, alternative='two.sided', conf.int	= TRUE)$p.value
+  #table_clusters[i, 'conf.int'] <- fisher.test(cont_table, alternative='two.sided', conf.int	= TRUE)$conf.int
+  table_clusters[i, 'estimate'] <- fisher.test(cont_table, alternative='two.sided', conf.int	= TRUE)$estimate
+}
+table_clusters$log2or <- log2(table_clusters$estimate)
+table_clusters <- mutate(table_clusters, Condition = case_when(log2or < 0 ~ "Rel", 
+                                                               log2or > 0 ~ "CR"))
+table_clusters$padj <- p.adjust(table_clusters$Fisher_pvalue, method = "bonferroni")
+
+table_clusters <- mutate(table_clusters, p.signif = case_when(padj > 0.1 ~ "ns", 
+                                                              padj < 0.1 ~ "<0.1"))
+table_clusters$`Cell type` <- factor(table_clusters$`Cell type`, levels = levels_hspcs)
+write.table(table_clusters, file = "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure2/202208_hspcs_fisher.tsv", sep = "\t")
+write.xlsx(table_clusters, "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure2/202209_fisher_bonferoni.xlsx", sheetName = "HSPCs", col.names = TRUE, row.names = TRUE, append = TRUE)
+
+#pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure2/202208_hspcs_OR.pdf", width = 4, height = 3.5)
+ggplot(table_clusters, aes(x = `Cell type`, y = log2or, fill = Condition)) + 
+  geom_bar(stat = "identity", position="dodge") + 
+  theme_classic() + 
+  theme(text = element_text(size=15), 
+        axis.text.x = element_text(angle = 90, 
+                                   vjust = 0.5, 
+                                   hjust=1, 
+                                   size=15), 
+        axis.text.y = element_text(size = 15)) + 
+  ylab("log2(OR)") + 
+  scale_fill_manual(values = c("#1F78B4", "#B2DF8A"))
+#dev.off()
+```
+###CD3+
+```{r}
+#Fig2c
+cd3_cell_numbers <- as.data.frame(table(cd3_obj@meta.data$Annotation_new, cd3_obj@meta.data$orig.ident))
+colnames(cd3_cell_numbers) <- c("Cell type", "Condition", "Freq")
+
+cr <- cd3_cell_numbers[which(cd3_cell_numbers$Condition == "CR"), c("Cell type", "Freq")]
+colnames(cr) <- c("Cell type", "CR")
+
+rel <- cd3_cell_numbers[which(cd3_cell_numbers$Condition == "Rel"), c("Cell type", "Freq")]
+colnames(rel) <- c("Cell type", "Rel")
+
+table_clusters <- cbind(cr, rel)[, c(1, 2, 4)]
+rownames(table_clusters) <- table_clusters$`Cell type`
+
+table_clusters$cr_pt <- table_clusters[, 'CR']/sum(table_clusters$`CR`)*100
+table_clusters$rel_pt <- table_clusters[, 'Rel']/sum(table_clusters$`Rel`)*100
+
+for (i in unique(table_clusters$`Cell type`)){
+  cont_table <- data.frame()
+  cont_table['CR', i] <- table_clusters[i, 'CR']
+  cont_table['CR', 'rest'] <- sum(table_clusters$`CR`) - as.numeric(table_clusters[i, 'CR'])
+  cont_table['Rel', i] <- table_clusters[i, 'Rel']
+  cont_table['Rel', 'rest'] <- sum(table_clusters$`Rel`) - as.numeric(table_clusters[i, 'Rel'])
+  
+  table_clusters[i, 'Fisher_pvalue'] <- fisher.test(cont_table, alternative='two.sided', conf.int	= TRUE)$p.value
+  table_clusters[i, 'estimate'] <- fisher.test(cont_table, alternative='two.sided', conf.int	= TRUE)$estimate
+}
+table_clusters$log2or <- log2(table_clusters$estimate + 0.001)
+table_clusters <- mutate(table_clusters, Condition = case_when(log2or < 0 ~ "Rel", 
+                                                               log2or > 0 ~ "CR"))
+table_clusters$padj <- p.adjust(table_clusters$Fisher_pvalue, method = "bonferroni")
+
+table_clusters <- mutate(table_clusters, p.signif = case_when(padj > 0.1 ~ "ns", 
+                                                              padj < 0.1 ~ "<0.1"))
+
+table_clusters$`Cell type` <- factor(table_clusters$`Cell type`, levels = levels_t)
+
+write.table(table_clusters, file = "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure2/202208_cd3_fisher.tsv", sep = "\t")
+write.xlsx(table_clusters, "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure2/202209_fisher_bonferoni.xlsx", sheetName = "CD3", col.names = TRUE, row.names = TRUE, append = TRUE)
+
+#pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure2/202208_cd3_OR.pdf", width = 8, height = 3.5)
+ggplot(table_clusters, aes(x = `Cell type`, y = log2or, fill = Condition)) + 
+  geom_bar(stat = "identity", position="dodge") + 
+  theme_classic() + 
+  theme(text = element_text(size=15), 
+        axis.text.x = element_text(angle = 90, 
+                                   vjust = 0.5, 
+                                   hjust=1, 
+                                   size=15), 
+        axis.text.y = element_text(size = 15)) + 
+  ylab("log2(OR)") + 
+  scale_fill_manual(values = c("#1F78B4", "#B2DF8A"))
+#dev.off()
+```
+
