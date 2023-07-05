@@ -1,0 +1,415 @@
+---
+title: "Figure3_SCENIC"
+output: html_document
+date: "2023-07-05"
+---
+
+```{r}
+library(knitr)
+library(dplyr)
+library(tidyverse)
+library(purrr)
+library(xlsx)
+library(Seurat)
+library(igraph)
+library(ggraph)
+library(graphlayouts)
+library(VennDiagram)
+library(ggplot2)
+library(msigdbr)
+library(AnnotationDbi)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+```
+
+```{r}
+out_dir <- "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/"
+setwd(out_dir)
+
+seurat_integrated <- readRDS("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/8.AbSeq/20220816_merged_SCT_xyexcluded_CompleteAnnot.rds")
+input_dir <- "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/3.Downtream_demultiplexed/Final_20210826/DiffExp/wo_label/Pseudocount_0.001/"
+scenic_df_wide <- read.csv("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/output/new_aucell_mtx.tsv", 
+                           sep = "\t", 
+                           row.names = "Cell")
+```
+
+```{r}
+# SCENIC output-target genes are assigned to each TF
+#Note: This is what we use for network re-construction
+
+reg_files <- list.files("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/output/regulon", 
+                       pattern = ".*\\(\\+\\)\\.tsv$", 
+                       full.names = T)
+
+df_list <- list()
+for (file in reg_files) {
+  # the regex matches any characters except "/" that are right before a "(+).tsv" and thereby fetches the TF-names
+  TF_name <- str_extract(file, "[^\\/]+(?=\\(\\+\\)\\.tsv)")
+  regulon_df <- read.csv(file, sep = "\t", header = F, col.names = c("target", "count"))
+  regulon_df <- mutate(regulon_df, TF = TF_name) 
+  df_list[[TF_name]] <- regulon_df
+}
+# targene_df_raw contains all target genes for the TFs, even the ones with
+# counts < 80 % that were not used for the activity calculation
+empty_df <- data.frame(TF = character(), target = character(),  count = numeric())
+targene_df_raw <- reduce(df_list, bind_rows, .init = empty_df)
+# make another copy with only the target genes that were used for the activity calculation (observed in >80% of runs; set in min-regulon-gene-occurrence in config.yaml
+targene_df <- filter(targene_df_raw, count > 40) #n = 50
+targene_df <- readRDS("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/202203_GRN.rds")
+```
+
+```{r}
+DE_genes <- list()
+for (p in c("CD4", "CD8", "HSPCs")){
+  tmp_de <- read.table(paste0("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.DiffExpr/202208_SCT/for_scenic/", p, "_DEgenes_MAST_RNA_relVScr_202208.tsv"))
+  print(tmp_de)
+  DE_genes[[paste0(p, " CR")]] <- setdiff(rownames(tmp_de[which(tmp_de$avg_log2FC < -1 & tmp_de$p_val_adj < 0.0005), ]), noise_genes)
+  DE_genes[[paste0(p, " REL")]] <- setdiff(rownames(tmp_de[which(tmp_de$avg_log2FC > 1 & tmp_de$p_val_adj < 0.0005), ]), noise_genes)
+}
+
+pop_de <- list()
+pop_de[["CD4"]] <- unique(unlist(DE_genes[c("CD4 CR", "CD4 REL")]))
+pop_de[["CD8"]] <- unique(unlist(DE_genes[c("CD8 CR", "CD8 REL")]))
+pop_de[["HSPCs"]] <- unique(unlist(DE_genes[c("HSPCs CR", "HSPCs REL")]))
+```
+
+```{r}
+sig_TFs <- list()
+fisher_df1 <- list()
+fisher_df2 <- list()
+for (p in c("CD4", "CD8", "HSPCs")){
+  tmp_genes <- intersect(pop_de[[p]], unique(targene_df$target)) #Take those that are in the network
+  tmp_targene_df <- targene_df[which(targene_df$target %in% tmp_genes), ] #Lets look only at all the DE genes, both conditions
+  cr_genes <- intersect(tmp_genes, DE_genes[[paste0(p, " CR")]])
+  rel_genes <- intersect(tmp_genes, DE_genes[[paste0(p, " REL")]])
+  count_tfs_genes <- data.frame(TF = unique(tmp_targene_df[which(tmp_targene_df$target %in% tmp_genes), "TF"])) #how many of the condition genes these TFs target
+  rownames(count_tfs_genes) <- count_tfs_genes$TF
+  
+  table_tfs <- data.frame() #Fisher test input
+  for (t in rownames(count_tfs_genes)){
+    #A bit repeatitive with the cont table, but i like the visualization of this table
+    tf_targets <- tmp_targene_df[which(tmp_targene_df$TF == t & tmp_targene_df$target %in% tmp_genes), "target"]
+    count_tfs_genes[t, "CR_TF"] <- length(intersect(tf_targets, cr_genes)) + 1
+    count_tfs_genes[t, "REL_TF"] <- length(intersect(tf_targets, rel_genes)) + 1
+    count_tfs_genes[t, "CR_rest"] <- length(setdiff(cr_genes, tf_targets)) + 1
+    count_tfs_genes[t, "REL_rest"] <- length(setdiff(rel_genes, tf_targets)) + 1
+    #Contigency table
+    cont_table <- data.frame()
+    cont_table['CR', t] <- count_tfs_genes[t, "CR_TF"]
+    cont_table['CR', 'rest'] <- count_tfs_genes[t, "CR_rest"]
+    cont_table['REL', t] <- count_tfs_genes[t, "REL_TF"]
+    cont_table['REL', 'rest'] <- count_tfs_genes[t, "REL_rest"]
+    table_tfs[t, 'TF'] <- t
+    table_tfs[t, 'Fisher_pvalue'] <- fisher.test(cont_table, alternative='two.sided', conf.int = TRUE)$p.value
+    table_tfs[t, 'OR'] <- fisher.test(cont_table, alternative='two.sided', conf.int = TRUE)$estimate
+  }
+  table_tfs$fdr <- p.adjust(table_tfs$Fisher_pvalue, method="fdr")
+  table_tfs$padj <- ifelse(table_tfs$fdr < 0.05, 
+                          "<0.05", 
+                          "n.s.")
+  #print(table_tfs)
+  table_tfs$log2OR <- log2(table_tfs$OR)
+  table_tfs <- table_tfs[order(table_tfs$log2OR), ]
+  levels_plot <- rownames(table_tfs)
+  #Supplemental Table 4
+  #write.table(table_tfs, file = paste0("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/2022_SubGenesForFisher/SuppFig/FisherTF_targets_", p, ".tsv"))
+  write.xlsx(tmp_de, paste0("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/2022_SubGenesForFisher/SuppFig/FisherTF_targets.xlsx"), sheetName = p, col.names = TRUE, row.names = TRUE, append = TRUE)
+
+  q3 <- ggplot(table_tfs, aes(x = factor(TF, levels = levels_plot), y = log2OR, fill = padj)) + 
+      geom_bar(stat = "identity") + 
+      theme_bw() + 
+      theme(text = element_text(size = 15), 
+                     axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), 
+            legend.position = "right") + xlab("TFs") + 
+    ggtitle(p) + 
+    scale_fill_manual("padj", values = c("n.s." = "#BF812D", "<0.05" = "#35978F")) # + scale_fill_gradientn(colors = head(viridis(10), 9)
+  
+  #For Supplemental Figure 7  
+  pdf(paste0("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/2022_SubGenesForFisher/SuppFig/FisherTF_targets_", p, "_3.pdf"), width = 15, height = 4)
+  plot(q3)
+  dev.off()
+  sig_TFs[[paste0(p, " CR")]] <- table_tfs[which(table_tfs$padj < 0.05 & table_tfs$log2OR > 0), "TF"]
+  sig_TFs[[paste0(p, " REL")]] <- table_tfs[which(table_tfs$padj < 0.05 & table_tfs$log2OR < 0), "TF"]
+}
+```
+
+```{r}
+#For Supplemental Figure 7
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/2022_SubGenesForFisher/SuppFig/Upset_DATFs.pdf", width = 5, height = 4)
+upset(fromList(sig_TFs), nsets = 15, order.by = "freq", point.size = 1.5)
+dev.off()
+```
+
+```{r}
+plot_tfs <- unique(unlist(sig_TFs))
+cd34_or <- read.table(paste0("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/2022_SubGenesForFisher/SuppFig/FisherTF_targets_HSPCs.tsv"))
+cd4_or <- read.table(paste0("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/2022_SubGenesForFisher/SuppFig/FisherTF_targets_CD4.tsv"))
+cd8_or <- read.table(paste0("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/2022_SubGenesForFisher/SuppFig/FisherTF_targets_CD8.tsv"))
+
+#tile plot but with log2fc
+or_df <- data.frame(Gene = plot_tfs, 
+                    CD8 = NA,
+                    CD4 = NA, 
+                    HSPCs = NA)
+rownames(or_df) <- or_df$Gene
+or_df$Gene <- NULL
+```
+
+
+```{r}
+for (g in rownames(or_df)){
+  if (g %in% c(sig_TFs$`HSPCs CR`, sig_TFs$`HSPCs REL`)){
+    or_df[g, "HSPCs"] <- -log2(cd34_or[g, "OR"])
+  }
+  if(g %in% c(sig_TFs$`CD4 CR`, sig_TFs$`CD4 REL`)){
+    or_df[g, "CD4"] <- -log2(cd4_or[g, "OR"])
+  }
+  if(g %in% c(sig_TFs$`CD8 CR`, sig_TFs$`CD8 REL`)){
+    or_df[g, "CD8"] <- -log2(cd8_or[g, "OR"])
+  }
+}
+levels <- rownames(or_df)
+levels <- c("SPI1", "STAT1", "FOSB", "JUN", "ETS1", "TAL1", "GATA1", "KLF1", "GATA2", "TBX21", "NFKB1", "RELB", "ELF1", "NFKB2", "MAFF", 
+            "IRF1", "JUNB", "JUND", "NFE2L2", "FOS", "REL", "FOSL2", "CREM")
+or_df$gene <- rownames(or_df)
+or_df <- gather(or_df, "Cell", "OR", 1:3)
+```
+
+```{r, fig.width=3, fig.height=4}
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/2022_SubGenesForFisher/202209_Fisher_TF_fdr0.05.pdf", 
+    height = 8, 
+    width = 5)
+ggplot(or_df, aes(x = factor(Cell, levels = c("HSPCs", "CD8", "CD4")), 
+                y = factor(gene, levels = levels))) + 
+  geom_tile(data = subset(or_df, !is.na(OR)), aes(fill = OR), color = "white",
+            lwd = 0.4,
+            linetype = 1) + 
+  theme_classic2() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+  scale_fill_gradientn(colours = rev(c("#B2DF8A", "white", "#1F78B4"))) + xlab("") + ylab("TF")
+dev.off()
+#And some target gene numbers
+table(targene_df[which(targene_df$TF %in% unique(unlist(sig_TFs)) & 
+                         targene_df$target %in% unique(unlist(pop_de))), c("TF")])
+```
+
+```{r}
+target_genes_list <- list()
+for (i in levels){
+  tmp_target_genes <- unique(targene_df[which(targene_df$TF == i & targene_df$target %in% unlist(DE_genes)), c("target")])
+  target_genes_list[[i]] <- tmp_target_genes
+}
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/2022_SubGenesForFisher/SuppFig/Upset_TargetsPerTF.pdf", width = 10, height = 8)
+upset(fromList(target_genes_list), nsets = 30)
+dev.off()
+```
+
+```{r}
+#For Supplemental Figure 8
+#Venn diagram for shared genes across shared tfs 
+display_venn <- function(x, ...){
+  grid.newpage()
+  venn_object <- venn.diagram(x, filename = NULL, lwd = 2, lty = 'blank', 
+                              fill = head(myCol, 2), cex = 1, fontface = "bold", fontfamily = "sans", cat.cex = 1)
+  pdf(paste0("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/2022_SubGenesForFisher/TFoverlap/", i, "_venn.pdf"), width = 3, height = 3)
+  grid.draw(venn_object)
+  dev.off()
+}
+myCol <- brewer.paired(10)[6:8]
+for (i in levels){
+  sig_genes_per_tf <- list()
+  tmp_CD4 <- unique(targene_df[which(targene_df$TF == i & 
+                       targene_df$target %in% unique(unlist(c(pop_de$CD4)))), c("target")])
+  tmp_CD8 <-  unique(targene_df[which(targene_df$TF == i & 
+                       targene_df$target %in% unique(unlist(pop_de$CD8))), c("target")])
+  sig_genes_per_tf[["CD4"]] <- tmp_CD4
+  sig_genes_per_tf[["CD8"]] <- tmp_CD8
+  v <- display_venn(sig_genes_per_tf)
+
+}
+```
+
+```{r, fig.height=5.5, fig.width=7}
+#Hallmark analysis for the 'functional annotation' of target genes (For Figure 3)
+tmp_bckgrnd <- as.data.frame(rowSums(seurat_integrated@assays$RNA@data))
+colnames(tmp_bckgrnd) <- "Expression"
+tmp_bckgrnd$gene <- rownames(tmp_bckgrnd)
+background <- tmp_bckgrnd[which(tmp_bckgrnd$Expression >0), "gene"]
+
+#DEgenes
+disease_genes <- unique(unlist(pop_de))
+go_enrich <- enrichGO(gene = disease_genes,
+                      OrgDb = 'org.Hs.eg.db',
+                      keyType = "SYMBOL",
+                      ont = "BP",
+                      universe = background)
+   
+plot(dotplot(go_enrich, showCategory = 30, title = "BP", font.size=12))
+go_df <- as.data.frame(go_enrich)
+```
+
+
+```{r}
+hallmark_gene_sets = msigdbr(species = "Homo sapiens", category = "H")
+
+hallmark_t2g <- hallmark_gene_sets %>% dplyr::distinct(gs_name, gene_symbol) %>% as.data.frame()
+hallmark_terms <- enricher(gene = disease_genes, TERM2GENE = hallmark_t2g)
+hallmark_terms_df <- as.data.frame(hallmark_terms)
+hallmark_terms_df$Hallmark <- str_replace_all(hallmark_terms_df$ID, "HALLMARK_", "")
+
+ggplot(hallmark_terms_df) + geom_point(aes(x = GeneRatio, y = factor(Hallmark, 
+                                                                     levels = hallmark_terms_df$Hallmark[order(GeneRatio)]), 
+                                           color = -log10(pvalue), size = GeneRatio)) + 
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+  xlab("Gene Ratio") + 
+  ylab("Hallmark terms") + 
+  scale_colour_gradientn(colors = viridis(10))
+```
+
+```{r}
+tnf_genes <- unique(unlist(strsplit(hallmark_terms_df[which(hallmark_terms_df$Description == "HALLMARK_TNFA_SIGNALING_VIA_NFKB"), "geneID"], split = "/")))
+ifn_genes <- unique(unlist(strsplit(hallmark_terms_df[which(hallmark_terms_df$Description %in% 
+                                                              c("HALLMARK_INTERFERON_GAMMA_RESPONSE", "HALLMARK_INTERFERON_ALPHA_RESPONSE")), "geneID"], split = "/")))
+Immune_activation <- unique(unlist(strsplit(go_df[which(go_df$Description %in% 
+                                                              c("cell activation involved in immune response", "regulation of immune effector process")), "geneID"], 
+                                            split = "/")))
+```
+
+```{r}
+tnf_final <- tnf_genes
+ifn_final <- setdiff(ifn_genes, c(tnf_final))
+activation_final <- setdiff(Immune_activation, c(tnf_final, ifn_final))
+```
+
+```{r}
+disease_genes <- list(ifn_final, tnf_final, activation_final)
+names(disease_genes) <- c("IFN", "TNF", "Activation")
+
+plot_df <- targene_df[which(targene_df$TF %in% plot_tfs & 
+                              targene_df$target %in% unique(c(unique(unlist(c(DE_genes$`CD4 CR`, DE_genes$`CD8 CR`, 
+                                                                              DE_genes$`CD4 REL`, DE_genes$`CD8 REL`))), plot_tfs))), ]
+```
+
+```{r}
+#Some numbers
+TF_counts <- as.data.frame(table(plot_df$TF))
+colnames(TF_counts) <- c("TF", "Freq")
+TF_counts <- TF_counts[rev(order(TF_counts$Freq)),]
+sig_TFs <- TF_counts[which(TF_counts$Freq > 0), ]$TF
+
+plot_df2 <- plot_df[, c("TF", "target")]
+colnames(plot_df2) <- c("source", "target")
+plot_df2 <- plot_df2[which(plot_df2$source %in% sig_TFs), ]
+
+plot_df2 <- mutate(plot_df2, goterm = case_when(target %in% ifn_final ~ "IFN", 
+                                                target %in% tnf_final ~ "TNF",
+                                                target %in% activation_final ~ "Activation"))
+
+plot_df2$goterm <- ifelse(is.na(plot_df2$goterm), 
+                          "Others", 
+                          plot_df2$goterm)
+plot_df2$goterm <- ifelse(plot_df2$target %in% c("HSPA1A", "HSPA1B"), 
+                          "Others", 
+                          plot_df2$goterm)
+terms_counts <- as.data.frame(table(distinct(plot_df2[, c("target", "goterm")])$goterm))
+colnames(terms_counts) <- c("TF", "Freq")
+plot_df2 <- as.data.frame(table(plot_df2[, c("source", "goterm")]))
+colnames(plot_df2) <- c("source", "target", "Freq")
+```
+
+```{r, fig.width=10, fig.height=3.5}
+levels_TFs <- rev(levels)
+cols <- c("lightgrey", "#D8C1DE", "#fdbf6f", "#fb9a99")
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/2022_SubGenesForFisher/202209_tf_goterms.pdf", width = 10, height = 3)
+ggplot(plot_df2, aes(x = factor(source, levels = levels_TFs), 
+                     fill = factor(target, levels = c("Others", "Activation", "IFN", "TNF")), 
+                     y = Freq)) + geom_bar(stat = "identity", position = "fill") + theme_classic() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + scale_y_continuous(labels = scales::percent) + scale_fill_manual("Term", values = cols)
+dev.off()
+```
+
+```{r}
+#Network visualization
+cd4_all_genes <- unique(unlist(c(DE_genes[["CD4 REL"]], DE_genes[["CD4 CR"]])))
+cd8_all_genes <- unique(unlist(c(DE_genes[["CD8 REL"]], DE_genes[["CD8 CR"]])))
+shared_cd4_cd8 <- intersect(cd4_all_genes, cd8_all_genes)
+```
+
+```{r}
+#For Figure 3 network
+plot_df <- targene_df[which(targene_df$TF %in% c("TBX21", "REL", "FOS") & 
+                              targene_df$target %in% unique(cd8_all_genes)), ]
+
+TF_counts <- as.data.frame(table(plot_df$TF))
+colnames(TF_counts) <- c("TF", "Freq")
+
+plot_df <- plot_df[, c("TF", "target")]
+colnames(plot_df) <- c("source", "target")
+#write.table(plot_df, paste0("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/", p, "network.csv"), sep = ",", quote = F, row.names = F)
+network <- plot_df %>% graph_from_data_frame(directed = F) 
+#Label only TFs
+V(network)$name <- ifelse(V(network)$name %in% unique(plot_df$source), 
+                          V(network)$name, 
+                          V(network)$name)
+
+V(network)$label<- ifelse(V(network)$name %in% unique(plot_df$source), 
+                          "TF", 
+                          ifelse(V(network)$name %in% unique(unlist(c(DE_genes[["CD8 REL"]]))), 
+                                 "Rel", 
+                                 "CR"))
+
+V(network)$size <- unlist(lapply(V(network)$name, function(x) ifelse(x %in% plot_df$source, 
+                                                                     TF_counts[which(TF_counts$TF == x), "Freq"], 
+                                                                     14)))
+  p <- network %>% 
+    ggraph(layout = "stress") +
+    geom_edge_link(alpha = .5, color = "darkgrey") +
+    geom_node_point(aes(colour = label, size = size)) + 
+    geom_node_text(aes(label = name, colour = label),  repel = TRUE, check_overlap = T) +
+    theme_graph() + 
+    scale_color_manual(values = c("#1F78B4", "#33A02C", "#FF7F00")) + 
+                         theme(legend.position="none")
+  
+  pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/202209_cd8_reduced_network_fig3.pdf", width = 8, height = 5)
+  plot(p)
+  dev.off()
+```
+
+```{r}
+#For Supplemental Figure 8
+hspcs_all_genes <- unique(unlist(c(DE_genes[["HSPCs REL"]], DE_genes[["HSPCs CR"]])))
+plot_df <- targene_df[which(targene_df$TF %in% c("GATA2", "GATA1", "KLF1", "TAL1", "JUN", "FOSB", "FOSL2", "JUNB") & 
+                              targene_df$target %in% unique(hspcs_all_genes)), ]
+TF_counts <- as.data.frame(table(plot_df$TF))
+colnames(TF_counts) <- c("TF", "Freq")
+
+plot_df <- plot_df[, c("TF", "target")]
+colnames(plot_df) <- c("source", "target")
+network <- plot_df %>% graph_from_data_frame(directed = F) 
+#Label only TFs
+V(network)$name <- ifelse(V(network)$name %in% unique(plot_df$source), 
+                          V(network)$name, 
+                          V(network)$name)
+
+V(network)$label<- ifelse(V(network)$name %in% unique(plot_df$source), 
+                          "TF", 
+                          ifelse(V(network)$name %in% unique(unlist(c(DE_genes[["HSPCs REL"]]))), 
+                                 "Rel", 
+                                 "CR"))
+
+V(network)$size <- unlist(lapply(V(network)$name, function(x) ifelse(x %in% plot_df$source, 
+                                                                     TF_counts[which(TF_counts$TF == x), "Freq"], 
+                                                                     14)))
+p <- network %>% 
+  ggraph(layout = "stress") +
+  geom_edge_link(alpha = .5, color = "darkgrey") +
+  geom_node_point(aes(colour = label, size = size)) + 
+  geom_node_text(aes(label = name, colour = label),  repel = TRUE, check_overlap = T) +
+  theme_graph() + 
+  scale_color_manual(values = c("#1F78B4", "#33A02C", "#FF7F00")) + 
+                       theme(legend.position="none")
+  
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/202209_hspcs_reduced_network_supfig8.pdf", width = 8, height = 5)
+plot(p)
+dev.off()
+```
