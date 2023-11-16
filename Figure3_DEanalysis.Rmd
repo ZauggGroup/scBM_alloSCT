@@ -10,10 +10,13 @@ library(dplyr)
 library(ggplot2)
 library(ggpubr)
 library(stringr)
+library(xlsx)
+library(circlize)
+library(msigdbr)
+library(ReactomePA)
 library(clusterProfiler)
 library(AnnotationDbi)
 library(org.Hs.eg.db)
-library(xlsx)
 ```
 
 ```{r}
@@ -33,7 +36,6 @@ levels(seurat_integrated) <- c("MLP", "MEP", "NP", "MDP", "pDCs", "cDCs", "preB"
                                "CD8 IFN", "CD4 IFN")
 levels_htmp <- levels(seurat_integrated)
 ```
-
 ```{r}
 #part of SuppTable7
 DE_all <- read.table("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.DiffExpr/202208_SCT/v2/CD8_EM_DEgenes_MAST_RNA_relVScr_202208.tsv") 
@@ -94,7 +96,6 @@ for (i in names(go_list)){
 ```
 
 ```{r, Hallmarak analysis}
-library(msigdbr)
 hallmark_gene_sets = msigdbr(species = "Homo sapiens", category = "H")
 immune_gene_sets = msigdbr(species = "Homo sapiens", category = "C7")
 
@@ -150,7 +151,6 @@ write.xlsx(as.data.frame(ck1), "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.Man
 ```
 
 ```{r, Reactome analysis}
-library(ReactomePA)
 x <- enrichPathway(gene=entrez_genes$CR, pvalueCutoff=0.1, readable=T)
 barplot(x, showCategory=20, title = "CR CD8+")
 
@@ -172,19 +172,17 @@ write.xlsx(as.data.frame(y), "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.Manus
              append = TRUE)
 ```
 
-```{r}
+```{r, Plot only selected GO terms}
 #Read particular page from excel
 dot_df <- read_excel("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/202208_CD8EM_Rel_CR_GeneOntology.xls", sheet = "Plot")
-```
-```{r}
+
 dot_df <- dot_df %>% separate(GeneRatio, sep = "/", into = c("n1", "n2"))
 dot_df$n1 <- as.numeric(dot_df$n1)
 dot_df$n2 <- as.numeric(dot_df$n2)
 
 dot_df$GeneRatio_pt <- 100*(dot_df$n1 / dot_df$n2)
-```
 
-```{r}
+#Figure3, panel E
 pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/202208_CD8EM_Functional.pdf", width = 9, height = 4)
 ggplot(dot_df, aes(y = factor(Description, levels = dot_df$Description), x = Condition, colour = -log10(p.adjust), size = GeneRatio_pt)) + 
   geom_point() + 
@@ -200,11 +198,6 @@ cd8_em <- subset(seurat_integrated, subset = Annotation_new %in% c("CD8 mem. 1",
 cd8_em <- NormalizeData(cd8_em)
 cd8_av <- AverageExpression(cd8_em, group.by = "Donors", slot = "scale.data")
 plot_htmp <- as.data.frame(cd8_av$RNA[setdiff(plot_genes, c(noise_genes, xy_genes)), ])
-max(plot_htmp)
-plot_htmp[plot_htmp > 10] <- 10
-quantile(plot_htmp)
-Heatmap(plot_htmp)
-length(heat_genes$Rel)
 ```
 
 ```{r}
@@ -216,10 +209,9 @@ ha <- rowAnnotation(foo = anno_mark(at = position, labels = label)) #make row an
 plot_htmp[plot_htmp > 1] <- 1
 plot_htmp[plot_htmp < -1] <- -1
 
-library(circlize)
 col_fun = colorRamp2(c(min(plot_htmp), 0, max(plot_htmp)), c("#21847C", "white", "#BC6008"))
 
-#plot heatmap
+#Figure 3, panel D
 pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/Supplement/CD8_heatmap_allDE_zscore_202208.pdf", 
     width = 5, 
     height = 5)
@@ -227,26 +219,6 @@ Heatmap(as.matrix(plot_htmp),
         show_row_names = F,
         right_annotation = ha,
         row_names_gp = grid::gpar(fontsize = 8), cluster_rows = F, show_column_dend = T)
-dev.off()
-#c(head(brewer.puor(100), n = 50), tail(brewer.brbg(100), n = 50))
-```
-```{r}
-length(plot_genes)
-```
-
-```{r}
-t_subset <- subset(seurat_integrated, subset = Annotation_new %in% c("MLP", "MEP", "NP", "MDP", "pDCs", "cDCs", "preB", "Mono", "pro/pre T"), invert = T)
-
-t_subset@meta.data$fig3 <- ifelse(t_subset@meta.data$Annotation_new %in% c("gdT", "MAIT"), 
-                                  "Unconv. T", 
-                                  ifelse(t_subset@meta.data$Annotation_new %in% c("CD8 mem. 1", "CD8 mem. 2", "CD8 mem. 3", 
-                                                                                  "CD8 eff. 1", "CD8 eff. 2"), 
-                                         "CD8 EM",
-                                         ifelse(t_subset@meta.data$Annotation_new %in% c("CD4 NV", "Th", "Th17", "Treg", "CD4 IFN"), 
-                                                "CD4 T", 
-                                                t_subset@meta.data$Annotation_new)))
-pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/UMAP_202208.pdf", width = 3.5, height = 4)
-DimPlot(t_subset, group.by = "fig3", cols = c("lightgrey", "#FB9A99", "#ECC978", "#FDBF6F", "#FF7F00","#CAB2D6"), pt.size = 0.05, label = T, repel = T, order = F) + xlim(-5, 5) + theme_void()
 dev.off()
 ```
 ```{r}
@@ -256,6 +228,7 @@ t_subset@meta.data$fig3_alt <- ifelse(t_subset@meta.data$Annotation_new %in% c("
                                                                                   "CD8 eff. 1", "CD8 eff. 2"), 
                                       t_subset@meta.data$Annotation_new, 
                                       "none")
+#Figure 3, panel C
 pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/UMAP2_202208.pdf", width = 3.5, height = 4)
 DimPlot(t_subset, group.by = "fig3_alt", cols = c("#FB9A99", "#ECC978", "#FDBF6F", "#FF7F00","#CAB2D6", "lightgrey"), pt.size = 0.05, label = T, repel = T, order = F) + xlim(-5, 5) + theme_void()
 dev.off()
