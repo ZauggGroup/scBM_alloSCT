@@ -1,6 +1,6 @@
 # scBM_alloSCT
 
-Scripts for analysis and Figures which are part of the Manuscript with title:
+Scripts for analysis and Figures which are part of the Manuscript with title: 
 The remission status of AML patients post alloSCT is associated with a distinct single-cell bone marrow T cell signature
 
 Sample doconvolution was performed using souporcell with the commands below:
