@@ -1,1 +1,264 @@
+---
+title: "202208_Figure3_DEanalysis"
+output: html_document
+date: '2022-08-23'
+---
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(stringr)
+library(clusterProfiler)
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+library(xlsx)
+```
+
+```{r}
+setwd("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/")
+out_dir <- "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/"
+seurat_integrated <- readRDS("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/8.AbSeq/20220816_merged_SCT_xyexcluded_CompleteAnnot.rds")
+#cd8_mon object is used to create the background gene set for the gene ontology analysis
+cd8_mon <- readRDS("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/CD8_final_trajectory/202208_cd8_monocle.rds")
+```
+
+```{r}
+#Idents Annotation_new
+levels(seurat_integrated) <- c("MLP", "MEP", "NP", "MDP", "pDCs", "cDCs", "preB", "Mono", "pro/pre T",  
+                               "CD8 NV","CD8 hobit", "CD8 mem. 1", "CD8 mem. 2", "CD8 mem. 3", "CD8 eff. 1", "CD8 eff. 2", 
+                               "gdT", "MAIT", 
+                               "CD4 NV", "Th", "Th17", "Treg", 
+                               "CD8 IFN", "CD4 IFN")
+levels_htmp <- levels(seurat_integrated)
+```
+
+```{r}
+#part of SuppTable7
+DE_all <- read.table("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.DiffExpr/202208_SCT/v2/CD8_EM_DEgenes_MAST_RNA_relVScr_202208.tsv") 
+DE_all$gene <- rownames(DE_all)
+colnames(DE_all) <- c("p_val", "log2FoldChange", "pct.1", "pct.2", "pvalue", "gene")
+
+DE_genes <- rownames(DE_all[which(DE_all$pvalue < 0.05 & abs(DE_all$log2FoldChange)>0.8), ])
+
+noise_genes <- DE_genes[c(grep("^RPS", DE_genes), grep("^RPL", DE_genes), grep("^MT-", DE_genes), grep("AS1", DE_genes), 
+                          grep("^Z([0-9]+)", DE_genes), grep("^AC([0-9]+)", DE_genes), 
+                          grep("^AP0", DE_genes), grep("^LINC", DE_genes), grep("^AL([0-9]+)", DE_genes), 
+                          grep("^BX([0-9]+)", DE_genes), grep("^C([0-9]+)", DE_genes), grep("orf", DE_genes))]
+DE_genes <- setdiff(DE_genes, noise_genes)
+
+de_df <- DE_all[DE_genes, ]
+heat_genes <- list()
+heat_genes$CR <- de_df[which(de_df$log2FoldChange < 0), "gene"]
+heat_genes$Rel <- de_df[which(de_df$log2FoldChange > 0), "gene"]
+```
+
+```{r, Gene ontology analysis}
+sc2 <- cd8_mon
+tmp_bckgrnd <- as.data.frame(rowSums(sc2@assays$RNA@data))
+colnames(tmp_bckgrnd) <- "Expression"
+tmp_bckgrnd$gene <- rownames(tmp_bckgrnd)
+background <- tmp_bckgrnd[which(tmp_bckgrnd$Expression >0), "gene"]
+#These features are non coding, or pseudogenes
+noise_genes <- background[c(grep("^RPS", background), grep("^RPL", background), grep("^MT-", background), grep("AS1", background), 
+                          grep("^Z([0-9]+)", background), grep("^AC([0-9]+)", background), 
+                          grep("^AP0", background), grep("^LINC", background), grep("^AL([0-9]+)", background), 
+                          grep("^BX([0-9]+)", background), grep("^C([0-9]+)", background), grep("orf", background))]
+background <- setdiff(background, noise_genes)
+
+#Background dataset --> all genes expressed in each cluster
+#GO for each cluster using ClusterProfiler
+go_list <- list()
+for (condition in c("CR", "Rel")){
+  for (go in c("BP", "MF", "CC")){ #
+    message(paste0(condition, " ", go))
+    go_enrich <- enrichGO(gene = unlist(heat_genes[[condition]]),
+                          OrgDb = 'org.Hs.eg.db',
+                          keyType = "SYMBOL",
+                          ont = go,
+                          universe = background)
+    go_list[[paste0(condition, " ", go)]] <- go_enrich
+    plot(dotplot(go_enrich, showCategory = 20, title = paste0(go, " ", condition), font.size=12))
+  }
+}
+
+for (i in names(go_list)){
+#part of SuppTable8
+  write.xlsx(as.data.frame(go_list[[i]]), "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/202208_CD8EM_Rel_CR_GeneOntology.xls", #used old one
+             sheetName = as.character(i), 
+             col.names = TRUE, 
+             row.names = TRUE, 
+             append = TRUE)
+  }
+```
+
+```{r, Hallmarak analysis}
+library(msigdbr)
+hallmark_gene_sets = msigdbr(species = "Homo sapiens", category = "H")
+immune_gene_sets = msigdbr(species = "Homo sapiens", category = "C7")
+
+immune_t2g <- immune_gene_sets %>% dplyr::distinct(gs_name, gene_symbol) %>% as.data.frame()
+hallmark_t2g <- hallmark_gene_sets %>% dplyr::distinct(gs_name, gene_symbol) %>% as.data.frame()
+#Hallmark
+em_rel <- enricher(gene = heat_genes$Rel, TERM2GENE = hallmark_t2g, pvalueCutoff = 0.1)
+em_cr <- enricher(gene = heat_genes$CR, TERM2GENE = hallmark_t2g, pvalueCutoff = 0.1)
+
+#part of SuppTable8
+write.xlsx(as.data.frame(em_rel), "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/202208_CD8EM_Rel_CR_GeneOntology.xls", #used old one
+             sheetName = "Hallmark_REL", 
+             col.names = TRUE, 
+             row.names = TRUE, 
+             append = TRUE)
+#Immunesigdb
+em_rel <- enricher(gene = heat_genes$Rel, TERM2GENE = immune_t2g, pvalueCutoff = 0.05)
+em_cr <- enricher(gene = heat_genes$CR, TERM2GENE = immune_t2g, pvalueCutoff = 0.05)
+
+#part of SuppTable8
+write.xlsx(as.data.frame(em_rel), "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/202208_CD8EM_Rel_CR_GeneOntology.xls", #used old one
+             sheetName = "C7_REL", 
+             col.names = TRUE, 
+             row.names = TRUE, 
+             append = TRUE)
+```
+
+```{r, KEGG enrichment analysis}
+get_entrez_ids <- function(gene_keys){
+  entrez_ids <- mapIds(x = org.Hs.eg.db, 
+                       keytype = "SYMBOL", 
+                       keys = gene_keys, 
+                       filter = "SYMBOL", 
+                       uniqueRow=TRUE, 
+                       column = "ENTREZID")
+  entrez_ids <- (data.frame(entrez_ids))$entrez_ids
+  entrez_ids <<- entrez_ids[!is.na(entrez_ids)]
+}
+entrez_genes <- list()
+get_entrez_ids(heat_genes$CR)
+entrez_genes[["CR"]] <- entrez_ids
+  
+get_entrez_ids(heat_genes$Rel)
+entrez_genes[["Rel"]] <- entrez_ids
+
+ck1 <- compareCluster(geneCluster = entrez_genes, fun = "enrichKEGG")
+#part of SuppTable8
+write.xlsx(as.data.frame(ck1), "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/202208_CD8EM_Rel_CR_GeneOntology.xls", #used old one
+             sheetName = "KEGG_CR_REL", 
+             col.names = TRUE, 
+             row.names = TRUE, 
+             append = TRUE)
+```
+
+```{r, Reactome analysis}
+library(ReactomePA)
+x <- enrichPathway(gene=entrez_genes$CR, pvalueCutoff=0.1, readable=T)
+barplot(x, showCategory=20, title = "CR CD8+")
+
+#part of SuppTable8
+write.xlsx(as.data.frame(x), "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/202208_CD8EM_Rel_CR_GeneOntology.xls", #used old one
+             sheetName = "Reactome_CR", 
+             col.names = TRUE, 
+             row.names = TRUE, 
+             append = TRUE)
+
+y <- enrichPathway(gene=entrez_genes$Rel, pvalueCutoff=0.1, readable=T)
+barplot(y, showCategory=30, title = "Rel CD8+")
+
+#part of SuppTable8
+write.xlsx(as.data.frame(y), "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/202208_CD8EM_Rel_CR_GeneOntology.xls", #used old one
+             sheetName = "Reactome_Rel", 
+             col.names = TRUE, 
+             row.names = TRUE, 
+             append = TRUE)
+```
+
+```{r}
+#Read particular page from excel
+dot_df <- read_excel("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/202208_CD8EM_Rel_CR_GeneOntology.xls", sheet = "Plot")
+```
+```{r}
+dot_df <- dot_df %>% separate(GeneRatio, sep = "/", into = c("n1", "n2"))
+dot_df$n1 <- as.numeric(dot_df$n1)
+dot_df$n2 <- as.numeric(dot_df$n2)
+
+dot_df$GeneRatio_pt <- 100*(dot_df$n1 / dot_df$n2)
+```
+
+```{r}
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/202208_CD8EM_Functional.pdf", width = 9, height = 4)
+ggplot(dot_df, aes(y = factor(Description, levels = dot_df$Description), x = Condition, colour = -log10(p.adjust), size = GeneRatio_pt)) + 
+  geom_point() + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), 
+        text = element_text(size = 20)) + ylab("Terms")
+dev.off()
+```
+
+```{r}
+plot_genes <- c(heat_genes$CR, heat_genes$Rel)
+cd8_em <- subset(seurat_integrated, subset = Annotation_new %in% c("CD8 mem. 1", "CD8 mem. 2", "CD8 mem. 3", "CD8 eff. 1", "CD8 eff. 2"))
+cd8_em <- NormalizeData(cd8_em)
+cd8_av <- AverageExpression(cd8_em, group.by = "Donors", slot = "scale.data")
+plot_htmp <- as.data.frame(cd8_av$RNA[setdiff(plot_genes, c(noise_genes, xy_genes)), ])
+max(plot_htmp)
+plot_htmp[plot_htmp > 10] <- 10
+quantile(plot_htmp)
+Heatmap(plot_htmp)
+length(heat_genes$Rel)
+```
+
+```{r}
+label <- c("ADGRG1", "GZMB", "CD27", "ZNF683", "CX3CR1", "KLRG1", "PLEK", "NKG7", "GZMH", "TNFSF9", "CXCR4", "KLRD1", "GZMK", "NR4A2", "IFI6", "NFKBIA", "JUNB")
+position <- which(rownames(plot_htmp) %in% label) #get position of labels in matrix
+label <- rownames(plot_htmp[position,]) #get labels in correct order
+
+ha <- rowAnnotation(foo = anno_mark(at = position, labels = label)) #make row annot for heatmap
+plot_htmp[plot_htmp > 1] <- 1
+plot_htmp[plot_htmp < -1] <- -1
+
+library(circlize)
+col_fun = colorRamp2(c(min(plot_htmp), 0, max(plot_htmp)), c("#21847C", "white", "#BC6008"))
+
+#plot heatmap
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/Supplement/CD8_heatmap_allDE_zscore_202208.pdf", 
+    width = 5, 
+    height = 5)
+Heatmap(as.matrix(plot_htmp), 
+        show_row_names = F,
+        right_annotation = ha,
+        row_names_gp = grid::gpar(fontsize = 8), cluster_rows = F, show_column_dend = T)
+dev.off()
+#c(head(brewer.puor(100), n = 50), tail(brewer.brbg(100), n = 50))
+```
+```{r}
+length(plot_genes)
+```
+
+```{r}
+t_subset <- subset(seurat_integrated, subset = Annotation_new %in% c("MLP", "MEP", "NP", "MDP", "pDCs", "cDCs", "preB", "Mono", "pro/pre T"), invert = T)
+
+t_subset@meta.data$fig3 <- ifelse(t_subset@meta.data$Annotation_new %in% c("gdT", "MAIT"), 
+                                  "Unconv. T", 
+                                  ifelse(t_subset@meta.data$Annotation_new %in% c("CD8 mem. 1", "CD8 mem. 2", "CD8 mem. 3", 
+                                                                                  "CD8 eff. 1", "CD8 eff. 2"), 
+                                         "CD8 EM",
+                                         ifelse(t_subset@meta.data$Annotation_new %in% c("CD4 NV", "Th", "Th17", "Treg", "CD4 IFN"), 
+                                                "CD4 T", 
+                                                t_subset@meta.data$Annotation_new)))
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/UMAP_202208.pdf", width = 3.5, height = 4)
+DimPlot(t_subset, group.by = "fig3", cols = c("lightgrey", "#FB9A99", "#ECC978", "#FDBF6F", "#FF7F00","#CAB2D6"), pt.size = 0.05, label = T, repel = T, order = F) + xlim(-5, 5) + theme_void()
+dev.off()
+```
+```{r}
+t_subset <- subset(seurat_integrated, subset = Annotation_new %in% c("MLP", "MEP", "NP", "MDP", "pDCs", "cDCs", "preB", "Mono", "pro/pre T"), invert = T)
+
+t_subset@meta.data$fig3_alt <- ifelse(t_subset@meta.data$Annotation_new %in% c("CD8 mem. 1", "CD8 mem. 2", "CD8 mem. 3", 
+                                                                                  "CD8 eff. 1", "CD8 eff. 2"), 
+                                      t_subset@meta.data$Annotation_new, 
+                                      "none")
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/UMAP2_202208.pdf", width = 3.5, height = 4)
+DimPlot(t_subset, group.by = "fig3_alt", cols = c("#FB9A99", "#ECC978", "#FDBF6F", "#FF7F00","#CAB2D6", "lightgrey"), pt.size = 0.05, label = T, repel = T, order = F) + xlim(-5, 5) + theme_void()
+dev.off()
+```
+
 
