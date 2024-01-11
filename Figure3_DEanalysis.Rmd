@@ -22,7 +22,7 @@ library(org.Hs.eg.db)
 ```{r}
 setwd("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/")
 out_dir <- "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/"
-seurat_integrated <- readRDS("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/8.AbSeq/20220816_merged_SCT_xyexcluded_CompleteAnnot.rds")
+seurat_integrated <- readRDS("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/3.Downtream_demultiplexed/20220816_merged_SCT_xyexcluded_CompleteAnnot.rds")
 #cd8_mon object is used to create the background gene set for the gene ontology analysis
 cd8_mon <- readRDS("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/CD8_final_trajectory/202208_cd8_monocle.rds")
 ```
