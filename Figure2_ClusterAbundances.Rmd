@@ -10,16 +10,16 @@ library(xlsx)
 ```
 
 ```{r}
-seurat_integrated <- readRDS("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/8.AbSeq/20220816_merged_SCT_xyexcluded_CompleteAnnot.rds")
+seurat_integrated <- readRDS("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/3.Downtream_demultiplexed/20220816_merged_SCT_xyexcluded_CompleteAnnot.rds")
 #Idents Annotation_new
 levels(seurat_integrated) <- c("MLP", "MEP", "NP", "MDP", "pDCs", "cDCs", "preB", "Mono", "pro/pre T",  
                                "CD8 NV","CD8 hobit", "CD8 mem. 1", "CD8 mem. 2", "CD8 mem. 3", "CD8 eff. 1", "CD8 eff. 2", 
                                "gdT", "MAIT", 
-                               "CD4 NV", "Th", "Th17", "Treg", 
+                               "CD4 NV", "CD4 mem.", "Th17", "Treg", 
                                "CD8 IFN", "CD4 IFN")
 levels_htmp <- levels(seurat_integrated)
 
-levels_t <- c("CD4 NV", "Th", "Th17", "Treg", "CD4 IFN", 
+levels_t <- c("CD4 NV", "CD4 mem.", "Th17", "Treg", "CD4 IFN", 
               "CD8 NV","CD8 hobit", "CD8 mem. 1", "CD8 mem. 2", "CD8 mem. 3", "CD8 eff. 1", "CD8 eff. 2", "gdT", "MAIT", "CD8 IFN")
 levels_hspcs <- c("MLP", "MEP", "NP", "MDP", "pDCs", "cDCs", "preB", "Mono", "pro/pre T")
 hspcs_obj <- subset(seurat_integrated, subset = Annotation_new %in% levels_hspcs)
