@@ -1,1 +1,94 @@
+---
+title: "Monocle analysis"
+output: html_document
+---
 
+```{r setup, include=FALSE}
+library(monocle3)
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(SeuratDisk)
+library("SeuratWrappers")
+```
+
+```{r}
+setwd("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/")
+out_dir <- "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/"
+setwd(out_dir)
+seurat_integrated <- readRDS("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/3.Downtream_demultiplexed/20220816_merged_SCT_xyexcluded_CompleteAnnot.rds")
+```
+
+```{r}
+seurat_to_monocle <- function(seurat_obj, 
+                              alignment = T, 
+                              alignment_type, 
+                              use_partition = F, 
+                              root_cells,
+                              use_principal_node = F){
+  # Prepare data for monocle
+  #Step 0: Convert seurat to cds object
+  cds <- as.cell_data_set(seurat_obj)
+  ## Step 1: Normalize and pre-process the data
+  cds <- preprocess_cds(cds, num_dim = 100, method = "PCA")
+  ## Step 1.1: Batch correct
+  if (alignment == T){
+    cds <- align_cds(cds, alignment_group = alignment_type)
+  }
+  ## Step 2: Reduce the dimensions using UMAP
+  cds <- reduce_dimension(cds)
+  ## Step 3: Cluster the cells
+  cds <- cluster_cells(cds, reduction_method = "UMAP")
+  # Order cells in pseudotime along a trajectory
+  ## Step 4: Learn graph
+  cds <- learn_graph(cds, use_partition = use_partition) #F
+  ## Step 5: Get starting point
+  starting_point <- colnames(subset(seurat_obj, idents = root_cells))
+  ## Step 6: Order cells
+  if (use_principal_node == T){
+    cds <- order_cells(cds, reduction_method = "UMAP", root_pr_nodes = get_earliest_principal_node(cds, time_bin = root_cells))
+  }
+  else{
+    cds <- order_cells(cds, reduction_method = "UMAP", root_cells = starting_point)
+  }
+}
+```
+
+```{r}
+levels_cd8 <- c("CD8 NV","CD8 hobit", "CD8 mem. 1", "CD8 mem. 2", "CD8 mem. 3", "CD8 eff. 1", "CD8 eff. 2")
+cd8_mon <- subset(seurat_integrated, subset = Annotation_new %in% levels_cd8)
+DimPlot(cd8_mon)
+DefaultAssay(cd8_mon) <- "SCT"
+cds8 <- seurat_to_monocle(seurat_obj = cd8_mon, alignment = T, alignment_type = "Donors", use_partition = F, root_cells = "CD8 NV")
+```
+
+```{r}
+plot_cells(cds8, label_groups_by_cluster=T,  color_cells_by = "Annotation", label_leaves = F)
+plot_cells(cds8, label_groups_by_cluster=T,  color_cells_by = "orig.ident")
+plot_cells(cds8,
+           color_cells_by = "pseudotime",
+           label_cell_groups=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           graph_label_size=1.5)
+
+cd8_mon <- AddMetaData(cd8_mon, metadata = pseudotime(cds8, reduction_method = "UMAP"), col.name = "pseudotime")
+cd8_mon@meta.data$pseudotime2 <- ifelse(cd8_mon@meta.data$pseudotime == Inf, 
+                                         NA, 
+                                         cd8_mon@meta.data$pseudotime)
+FeaturePlot(cd8_mon, features = "pseudotime", cols = c("lightgrey", "darkred"))
+```
+
+
+```{r, Convert to h5seurat in order to load to python}
+DefaultAssay(cd8_mon) <- "integrated"
+#Weird error
+#cd8_mon$integrated <- NULL
+#cd8_mon$SCT <- NULL
+##no slot of name "median_umi" for this object of class "SCTModel"
+slot(cd8_mon@assays$integrated@SCTModel.list[[1]], 'median_umi') <- median(cd8_mon$integrated@SCTModel.list[[1]]@cell.attributes$umi)
+#cd8_mon$integrated@SCTModel.list[[1]]@arguments
+SaveH5Seurat(cd8_mon, 
+             filename = "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/CD8_final_trajectory/202204_final_cd8_monocle_int_cd8NV", overwrite = T)
+Convert("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/CD8_final_trajectory/202204_final_cd8_monocle_int_cd8NV.h5seurat", dest = "h5ad", overwrite = T)
+```
