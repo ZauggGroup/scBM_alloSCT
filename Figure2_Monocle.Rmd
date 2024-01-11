@@ -8,6 +8,7 @@ library(monocle3)
 library(Seurat)
 library(ggplot2)
 library(dplyr)
+library(ggpubr)
 library(SeuratDisk)
 library("SeuratWrappers")
 ```
@@ -55,40 +56,165 @@ seurat_to_monocle <- function(seurat_obj,
 ```
 
 ```{r}
-levels_cd8 <- c("CD8 NV","CD8 hobit", "CD8 mem. 1", "CD8 mem. 2", "CD8 mem. 3", "CD8 eff. 1", "CD8 eff. 2")
+DefaultAssay(seurat_integrated) <- "SCT"
+levels_cd8 <- c("CD8 NV","CD8 hobit", "CD8 mem. 1", "CD8 mem. 2", "CD8 mem. 3", "CD8 eff. 1", "CD8 eff. 2", "CD8 IFN")
 cd8_mon <- subset(seurat_integrated, subset = Annotation_new %in% levels_cd8)
-DimPlot(cd8_mon)
-DefaultAssay(cd8_mon) <- "SCT"
-cds8 <- seurat_to_monocle(seurat_obj = cd8_mon, alignment = T, alignment_type = "Donors", use_partition = F, root_cells = "CD8 NV")
+cds8 <- seurat_to_monocle(seurat_obj = cd8_mon, alignment = T, alignment_type = "Donors", use_partition = T, root_cells = "CD8 NV", use_principal_node = F)
 ```
 
-```{r}
-plot_cells(cds8, label_groups_by_cluster=T,  color_cells_by = "Annotation", label_leaves = F)
-plot_cells(cds8, label_groups_by_cluster=T,  color_cells_by = "orig.ident")
+```{r, Supplemental Figure 5}
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure2/202209_cd8_pseudotime_wpartition_umap1.pdf", width = 5.3, height = 3.5)
+plot_cells(cds8, label_groups_by_cluster=T, color_cells_by = "Annotation_new", label_leaves = T, trajectory_graph_color = "black",
+           trajectory_graph_segment_size = 1, 
+           label_roots = T, 
+           label_cell_groups=FALSE, 
+           label_branch_points=FALSE,
+           graph_label_size=1.5) + scale_color_manual(values = col_dict[unique(cds8@colData$Annotation_new),"color"])
+dev.off()
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure2/202209_cd8_pseudotime_wpartition_umap2.pdf", width = 5, height = 3.5)
 plot_cells(cds8,
            color_cells_by = "pseudotime",
            label_cell_groups=FALSE,
            label_leaves=FALSE,
            label_branch_points=FALSE,
            graph_label_size=1.5)
+dev.off()
+```
 
+```{r}
 cd8_mon <- AddMetaData(cd8_mon, metadata = pseudotime(cds8, reduction_method = "UMAP"), col.name = "pseudotime")
 cd8_mon@meta.data$pseudotime2 <- ifelse(cd8_mon@meta.data$pseudotime == Inf, 
                                          NA, 
                                          cd8_mon@meta.data$pseudotime)
-FeaturePlot(cd8_mon, features = "pseudotime", cols = c("lightgrey", "darkred"))
+#Save objects
+saveRDS(cd8_mon, file = "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/CD8_final_trajectory/202209_cd8_monocle_partition_sct.rds")
+saveRDS(cds8, file = "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/CD8_final_trajectory/202209_cd8_monocle_scobj_partition_sct.rds")
 ```
 
+```{r, Figure 2 panel E}
+trajectory = subset(cd8_mon, cells = rownames(cd8_mon@meta.data)[is.na(cd8_mon@meta.data$pseudotime2)], invert = T)
 
-```{r, Convert to h5seurat in order to load to python}
-DefaultAssay(cd8_mon) <- "integrated"
-#Weird error
-#cd8_mon$integrated <- NULL
-#cd8_mon$SCT <- NULL
+input_vln <- c()
+input_vln$pseudotime <- trajectory@meta.data$pseudotime2
+input_vln$condition <- trajectory@meta.data$orig.ident
+input_vln <- as.data.frame(input_vln)
+
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure2/202209_cd8_pseudotime_dens_wpartition.pdf", width = 6, height = 3.5)
+ggplot(input_vln, aes(x = pseudotime, color = condition, fill = condition)) + 
+geom_density(alpha = 0.2, size = 1.5) + 
+    theme_classic() + 
+  theme(text = element_text(size=15), 
+        axis.text.x = element_text(angle = 90, 
+                                   vjust = 0.5, 
+                                   hjust=1, 
+                                   size=15), 
+        axis.text.y = element_text(size = 15), 
+        legend.position = "right") + 
+  scale_color_manual(values = c("#3182bd", "#a1d99b")) + 
+  scale_fill_manual(values = c("#3182bd", "#a1d99b"))
+dev.off()
+
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure2/202209_cd8_pseudotime_box_wpartition.pdf", width = 6, height = 2.5)
+ggplot(input_vln, aes(y = pseudotime, x = condition, fill = condition)) + 
+  geom_boxplot(alpha = 1, width = 0.5, outlier.size=0.1) + 
+  theme_classic() + 
+  theme(text = element_text(size=15), 
+        axis.text.x = element_text(angle = 90, 
+                                   vjust = 0.5, 
+                                   hjust=1, 
+                                   size=15), 
+        axis.text.y = element_text(size = 15), 
+        legend.position = "right") + 
+  scale_fill_manual(values = c("#3182bd", "#a1d99b")) + 
+  stat_compare_means(method = "t.test",  
+                     label.x = 1.5, 
+                     label.y = 2.5) + coord_flip()
+dev.off()
+```
+
+```{r, Figure 2 panel F}
+genes_subset <- c("ADGRG1", "CD27", "CCR7", "SELL", "LEF1", "IL7R",
+                  "ZNF683", "GZMK", "NKG7", "GZMB", "KLRG1", "PRF1", "FCGR3A", "CX3CR1", "GZMM", "CD160", "LAG3", 
+                  "CTLA4", "RGS1", "EOMES", "PDCD1", "TIGIT", "HAVCR2")
+
+set_if_interest_genes = intersect(c(genes_subset), rownames(trajectory@assays$RNA))
+heatmap_data = trajectory@assays$RNA@scale.data[set_if_interest_genes,] %>% as.data.frame()
+#reorder the cells
+heatmap_data <- heatmap_data[, rownames(trajectory@meta.data)[order(trajectory@meta.data[, "pseudotime2"])]]
+
+#heatmap_data = apply(heatmap_data, 1, function(x) { scales::rescale(x, to=c(0,1))}) %>% t() %>% as.data.frame()
+col_heat <- colnames(heatmap_data)
+heatmap_data = apply(heatmap_data, 1,  function(x) { smooth.spline(x, spar = 0.9)$y}) %>% t()%>% as.data.frame()
+colnames(heatmap_data) <- col_heat
+heatmap_data = apply(heatmap_data, 1, function(x) { scales::rescale(x, to=c(0,1))}) %>% t() %>% as.data.frame()
+#heatmap_data$index = apply(heatmap_data , 1 , function(x) { order(x,decreasing=T)[1]})
+#heatmap_data = heatmap_data %>% arrange(index)
+#heatmap_data$index = NULL
+heatmap_data$genes = rownames(heatmap_data)
+
+heatmap_data_reshape = heatmap_data %>% reshape2::melt(id = "genes")
+heatmap_data_reshape$genes = factor(heatmap_data_reshape$genes , levels = rev(unique(heatmap_data$genes)))
+heatmap_data_reshape$Gene <- paste0(heatmap_data_reshape$genes, " ", heatmap_data_reshape$Condition)
+
+p = heatmap_data_reshape %>% ggplot(aes(x = variable, y = genes, fill = value)) + 
+  geom_tile() + 
+  scale_fill_gradientn(colors = c("black", ocean.thermal(5))) + #oceanthermal, viridis from pals
+  theme(axis.text.x = element_blank() , 
+        axis.text.y = element_text(size = 10)) + xlab("pseudotime")
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure2/Fig2_pseudotime_htmp_202209_ocean_Partition.pdf", height = 4, width = 5)
+plot(p)
+dev.off()
+```
+
+```{r, Convert to h5seurat to load to python - for diffusion maps in Figure 2 panell G and for supplemental figure 5}
+#these columns which contain no NA values
+cd8_mon@meta.data <- cd8_mon@meta.data[, c("orig.ident", "nCount_RNA", "nFeature_RNA", "percent.mt", "singlets", 
+                                           "nCount_scenic", "nFeature_scenic", "pseudotime", "Annotation_new")] 
+cd8_mon@assays$integrated <- NULL
+cd8_mon@assays$MAGIC_RNA <- NULL
+cd8_mon@assays$scenic <- NULL
+DefaultAssay(cd8_mon) <- "SCT"
 ##no slot of name "median_umi" for this object of class "SCTModel"
-slot(cd8_mon@assays$integrated@SCTModel.list[[1]], 'median_umi') <- median(cd8_mon$integrated@SCTModel.list[[1]]@cell.attributes$umi)
+#Solved with the line below
+#slot(cd8_mon@assays$integrated@SCTModel.list[[1]], 'median_umi') <- median(cd8_mon$integrated@SCTModel.list[[1]]@cell.attributes$umi)
 #cd8_mon$integrated@SCTModel.list[[1]]@arguments
+#SaveH5Seurat returns an error still
 SaveH5Seurat(cd8_mon, 
-             filename = "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/CD8_final_trajectory/202204_final_cd8_monocle_int_cd8NV", overwrite = T)
-Convert("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/CD8_final_trajectory/202204_final_cd8_monocle_int_cd8NV.h5seurat", dest = "h5ad", overwrite = T)
+             filename = "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/CD8_final_trajectory/202209_cd8_monocle_sct_cd8NV.h5Seurat", overwrite = T)
+Convert("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/CD8_final_trajectory/202209_cd8_monocle_sct_cd8NV.h5seurat", dest = "h5ad", overwrite = T)
+```
+
+```{r, Load output from diffusion maps - from PAGA}
+cd8_sub <- trajectory
+diffmap <- read.table("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/PAGA/20220919_cd8_diffmap.out", sep = ",")
+colnames(diffmap) <- rownames(trajectory@meta.data)
+diffmap <- as.data.frame(t(diffmap))
+rownames(diffmap) <- str_replace_all(rownames(diffmap), pattern = "[.]", "-")
+
+diffmap_1 <- diffmap$V2
+names(diffmap_1) <- rownames(diffmap)
+diffmap_2 <- diffmap$V3
+names(diffmap_2) <- rownames(diffmap)
+diffmap_3 <- diffmap$V4
+names(diffmap_3) <- rownames(diffmap)
+
+cd8_sub <- AddMetaData(cd8_sub, metadata = diffmap_1, col.name = "DC1")
+cd8_sub <- AddMetaData(cd8_sub, metadata = diffmap_2, col.name = "DC2")
+cd8_sub <- AddMetaData(cd8_sub, metadata = diffmap_3, col.name = "DC3")
+tmp_df <- cd8_sub@meta.data[, c("DC1","DC2", "DC3","Annotation_new", "pseudotime2", "orig.ident")]
+tmp_df2 <- as.data.frame(t(cd8_sub@assays$RNA@data[genes_subset, ]))
+tmp_df <- cbind(tmp_df, tmp_df2)
+```
+
+```{r, Figure 2 panel G}
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/20220919_diffmap_monoclePseudo_split.pdf", width = 4.5, height = 3)
+ggplot(tmp_df, aes(x = DC1, y = DC2, color = orig.ident)) + geom_point(size = 0.4)  + theme_void() + scale_color_manual(values = c("#3182bd", "#a1d99b"))
+dev.off()
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/20220919_diffmap_Annotation.pdf", width = 5, height = 3)
+ggplot(tmp_df, aes(x = DC1, y = DC2, color = Annotation_new)) + geom_point(size = 0.3) + theme_void() + scale_color_manual(values = c("#9fbdda", "#8f9eca", "#cca0cd", "#d579ba", "#d7e5f0", "#bbd0e4", "#d8c1de"))
+dev.off()
+
+pdf("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.Monocle/20220919_diffmap_monoclePseudo2.pdf", width = 7, height = 3)
+ggplot(tmp_df, aes(x = DC1, y = DC2, color = pseudotime2)) + geom_point(size = 0.4)  + theme_void() +  scale_color_gradientn(colors = c(tail(ocean.thermal(20), 18))) + facet_wrap(~ orig.ident)
+dev.off()
 ```
