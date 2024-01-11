@@ -26,8 +26,10 @@ library(org.Hs.eg.db)
 out_dir <- "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/6.ManuscriptFigures/Figure3/"
 setwd(out_dir)
 
-seurat_integrated <- readRDS("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/8.AbSeq/20220816_merged_SCT_xyexcluded_CompleteAnnot.rds")
+seurat_integrated <- readRDS("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/3.Downtream_demultiplexed/20220816_merged_SCT_xyexcluded_CompleteAnnot.rds")
+
 input_dir <- "/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/3.Downtream_demultiplexed/Final_20210826/DiffExp/wo_label/Pseudocount_0.001/"
+#SCENIC was ran using an inhouse Snakemake pipeline; see Supplemental methods
 scenic_df_wide <- read.csv("/g/scb2/zaugg/amathiou/2020Dec_scBM_Tcells/4.SCENIC/output/new_aucell_mtx.tsv", 
                            sep = "\t", 
                            row.names = "Cell")
